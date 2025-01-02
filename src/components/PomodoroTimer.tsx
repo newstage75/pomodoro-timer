@@ -119,6 +119,14 @@ const PomodoroTimer = () => {
     );
   };
 
+  const toggleMode = () => {
+    setIsRunning(false);
+    setIsBreak(!isBreak);
+    setTimeLeft(
+      !isBreak ? settings.breakDuration * 60 : settings.workDuration * 60
+    );
+  };
+
   const handleSettingsChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     const { name, value } = e.target;
     setSettings((prev) => ({
@@ -195,20 +203,33 @@ const PomodoroTimer = () => {
             <div className="text-6xl font-bold mb-8">
               {formatTime(timeLeft)}
             </div>
-            <div className="space-x-4">
-              <Button
-                onClick={toggleTimer}
-                className={`px-8 ${
-                  isRunning
-                    ? "bg-red-500 hover:bg-red-600"
-                    : "bg-green-500 hover:bg-green-600"
-                }`}
-              >
-                {isRunning ? "一時停止" : "スタート"}
-              </Button>
-              <Button onClick={resetTimer} variant="outline">
-                リセット
-              </Button>
+            <div className="space-y-4">
+              <div className="space-x-4">
+                <Button
+                  onClick={toggleTimer}
+                  className={`px-8 ${
+                    isRunning
+                      ? "bg-red-500 hover:bg-red-600"
+                      : "bg-green-500 hover:bg-green-600"
+                  }`}
+                >
+                  {isRunning ? "一時停止" : "スタート"}
+                </Button>
+                <Button onClick={resetTimer} variant="outline">
+                  リセット
+                </Button>
+              </div>
+              <div>
+                <Button
+                  onClick={toggleMode}
+                  variant="secondary"
+                  className="text-sm"
+                >
+                  {isBreak
+                    ? "🎯 作業モードに切り替え"
+                    : "☕️ 休憩モードに切り替え"}
+                </Button>
+              </div>
             </div>
           </div>
         )}
