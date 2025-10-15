@@ -41,6 +41,8 @@ const PomodoroTimer = () => {
   const [currentTitle, setCurrentTitle] = useState("");
   const [completedWorks, setCompletedWorks] = useState<CompletedWork[]>([]);
   const [editingWorkId, setEditingWorkId] = useState<string | null>(null);
+  const [editingTitleId, setEditingTitleId] = useState<string | null>(null);
+  const [copiedWorkId, setCopiedWorkId] = useState<string | null>(null);
   const [workStartTime, setWorkStartTime] = useState<Date | null>(null);
   const [hasCompletedThisSession, setHasCompletedThisSession] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
@@ -210,32 +212,45 @@ const PomodoroTimer = () => {
   };
 
   const copyWorkMessage = async (work: CompletedWork) => {
+    const year = work.startedAt.getFullYear();
+    const month = String(work.startedAt.getMonth() + 1).padStart(2, '0');
+    const day = String(work.startedAt.getDate()).padStart(2, '0');
+
     const startTimeStr = work.startedAt.toLocaleTimeString("ja-JP", {
       hour: "2-digit",
       minute: "2-digit",
     });
-    const endTimeStr = work.completedAt.toLocaleTimeString("ja-JP", {
-      hour: "2-digit",
-      minute: "2-digit",
-    });
 
-    let message = `作業「${work.title}」を完了しました。（${work.duration}分）\n${startTimeStr}〜${endTimeStr}`;
+    let message = `「${work.title}」を完了しました。${work.duration}分<${year}年${month}月${day}日 ${startTimeStr}>`;
 
     if (work.reflection.trim()) {
-      message += `\n\n感想:\n${work.reflection}`;
+      message += `\n${work.reflection}`;
     }
 
     try {
-      await navigator.clipboard.writeText(message);
-      // 一時的に通知を表示するため、編集中のIDを設定
-      setEditingWorkId(work.id);
+      // クリップボードAPIが使えるかチェック
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        await navigator.clipboard.writeText(message);
+      } else {
+        // フォールバック: 古いブラウザ用
+        const textArea = document.createElement("textarea");
+        textArea.value = message;
+        textArea.style.position = "fixed";
+        textArea.style.left = "-999999px";
+        document.body.appendChild(textArea);
+        textArea.select();
+        document.execCommand("copy");
+        document.body.removeChild(textArea);
+      }
+
+      // 成功通知を表示
+      setCopiedWorkId(work.id);
       setTimeout(() => {
-        if (editingWorkId === work.id) {
-          setEditingWorkId(null);
-        }
-      }, 2000);
+        setCopiedWorkId(null);
+      }, 3000);
     } catch (error) {
       console.error("コピーに失敗しました:", error);
+      alert("コピーに失敗しました。もう一度お試しください。");
     }
   };
 
@@ -271,18 +286,17 @@ const PomodoroTimer = () => {
       {/* タイマーカード */}
       <Card className="w-full">
         <CardHeader>
-          <CardTitle className="text-center flex justify-between items-center">
-            <span>{isBreak ? "休憩時間" : "ポモドーロタイマー"}</span>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => setShowSettings(!showSettings)}
-                className="text-xs px-2 py-1 h-auto"
-              >
-                ⚙️ 設定
-              </Button>
-            </div>
+          <CardTitle className="flex justify-between items-center">
+            <span className="text-lg sm:text-xl md:text-2xl">{isBreak ? "休憩時間" : "ポモドーロタイマー"}</span>
+            <Button
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowSettings(!showSettings)}
+              className="text-xl sm:text-base px-2 sm:px-3 py-2 h-auto"
+            >
+              <span className="sm:hidden">⚙️</span>
+              <span className="hidden sm:inline">⚙️ 設定</span>
+            </Button>
           </CardTitle>
         </CardHeader>
         <CardContent>
@@ -315,14 +329,14 @@ const PomodoroTimer = () => {
             </div>
           ) : (
             <div className="text-center">
-              <div className="text-7xl font-bold mb-8 py-6">
+              <div className="text-5xl sm:text-6xl md:text-7xl font-bold mb-6 sm:mb-8 py-4 sm:py-6">
                 {formatTime(timeLeft)}
               </div>
-              <div className="space-y-4">
-                <div className="space-x-4">
+              <div className="space-y-3 sm:space-y-4">
+                <div className="flex flex-col sm:flex-row gap-2 sm:gap-4 justify-center items-center">
                   <Button
                     onClick={toggleTimer}
-                    className={`px-8 ${
+                    className={`w-full sm:w-auto px-6 sm:px-8 py-3 sm:py-2 text-base sm:text-sm ${
                       isRunning
                         ? "bg-red-500 hover:bg-red-600"
                         : "bg-green-500 hover:bg-green-600"
@@ -330,7 +344,7 @@ const PomodoroTimer = () => {
                   >
                     {isRunning ? "一時停止" : "スタート"}
                   </Button>
-                  <Button onClick={resetTimer} variant="outline">
+                  <Button onClick={resetTimer} variant="outline" className="w-full sm:w-auto py-3 sm:py-2 text-base sm:text-sm">
                     リセット
                   </Button>
                 </div>
@@ -338,7 +352,7 @@ const PomodoroTimer = () => {
                   <Button
                     onClick={toggleMode}
                     variant="secondary"
-                    className="text-sm"
+                    className="w-full sm:w-auto text-sm py-3 sm:py-2"
                   >
                     {isBreak
                       ? "🎯 作業モードに切り替え"
@@ -350,23 +364,25 @@ const PomodoroTimer = () => {
           )}
         </CardContent>
 
-        {/* 現在の作業タイトル（タイマーカード内） */}
-        <CardContent className="pt-0">
-          <Card className="bg-yellow-50 border-yellow-200">
-            <CardHeader>
-              <CardTitle className="text-lg">現在の作業</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <Input
-                type="text"
-                placeholder="作業タイトルを入力..."
-                value={currentTitle}
-                onChange={(e) => setCurrentTitle(e.target.value)}
-                className="text-lg bg-white"
-              />
-            </CardContent>
-          </Card>
-        </CardContent>
+        {/* 現在の作業タイトル（タイマーカード内）- 設定画面では非表示 */}
+        {!showSettings && (
+          <CardContent className="pt-0">
+            <Card className="bg-yellow-50 border-yellow-200">
+              <CardHeader className="pb-3 sm:pb-6">
+                <CardTitle className="text-base sm:text-lg">現在の作業</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <Input
+                  type="text"
+                  placeholder="作業タイトルを入力..."
+                  value={currentTitle}
+                  onChange={(e) => setCurrentTitle(e.target.value)}
+                  className="text-lg sm:text-xl bg-white py-3 sm:py-2"
+                />
+              </CardContent>
+            </Card>
+          </CardContent>
+        )}
 
         <CardFooter className="justify-end">
           <a
@@ -409,26 +425,43 @@ const PomodoroTimer = () => {
                     hour: "2-digit",
                     minute: "2-digit",
                   })}
-                  〜
-                  {work.completedAt.toLocaleTimeString("ja-JP", {
-                    hour: "2-digit",
-                    minute: "2-digit",
-                  })}
                 </p>
               </CardHeader>
               <CardContent className="space-y-4">
                 <div className="space-y-2">
-                  <Label htmlFor={`title-${work.id}`}>作業タイトル</Label>
+                  <div className="flex justify-between items-center mb-1">
+                    <Label htmlFor={`title-${work.id}`}>作業タイトル</Label>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setEditingTitleId(editingTitleId === work.id ? null : work.id)}
+                      className="text-xs h-auto p-1"
+                    >
+                      {editingTitleId === work.id ? "完了" : "編集"}
+                    </Button>
+                  </div>
                   <Input
                     id={`title-${work.id}`}
                     type="text"
                     placeholder="タイトルを入力..."
                     value={work.title}
                     onChange={(e) => handleTitleChange(work.id, e.target.value)}
+                    disabled={editingTitleId !== work.id}
+                    className={editingTitleId !== work.id ? "bg-gray-100" : ""}
                   />
                 </div>
                 <div className="space-y-2">
-                  <Label htmlFor={`reflection-${work.id}`}>感想</Label>
+                  <div className="flex justify-between items-center mb-1">
+                    <Label htmlFor={`reflection-${work.id}`}>感想</Label>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => setEditingWorkId(editingWorkId === work.id ? null : work.id)}
+                      className="text-xs h-auto p-1"
+                    >
+                      {editingWorkId === work.id ? "完了" : "編集"}
+                    </Button>
+                  </div>
                   <Textarea
                     id={`reflection-${work.id}`}
                     placeholder="この作業の感想を記入..."
@@ -437,6 +470,8 @@ const PomodoroTimer = () => {
                       handleReflectionChange(work.id, e.target.value)
                     }
                     rows={3}
+                    disabled={editingWorkId !== work.id}
+                    className={editingWorkId !== work.id ? "bg-gray-100" : ""}
                   />
                 </div>
                 <div className="flex items-center gap-2">
@@ -447,7 +482,7 @@ const PomodoroTimer = () => {
                   >
                     📋 コピー
                   </Button>
-                  {editingWorkId === work.id && (
+                  {copiedWorkId === work.id && (
                     <span className="text-sm text-green-600">
                       ✓ コピーしました
                     </span>
