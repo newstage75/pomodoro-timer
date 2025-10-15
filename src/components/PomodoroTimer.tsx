@@ -65,6 +65,7 @@ const PomodoroTimer = () => {
     }
 
     return () => clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isRunning, timeLeft]);
 
   const playNotificationSound = () => {
