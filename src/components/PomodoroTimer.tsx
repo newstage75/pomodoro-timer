@@ -19,6 +19,15 @@ interface TimerSettings {
   breakDuration: number;
 }
 
+interface CompletedWork {
+  id: string;
+  title: string;
+  duration: number;
+  startedAt: Date;
+  completedAt: Date;
+  reflection: string;
+}
+
 const PomodoroTimer = () => {
   const [settings, setSettings] = useState<TimerSettings>({
     workDuration: 25,
@@ -29,11 +38,11 @@ const PomodoroTimer = () => {
   const [isBreak, setIsBreak] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const [isPlaying, setIsPlaying] = useState(false);
-  const [title, setTitle] = useState("");
-  const [showCopyNotification, setShowCopyNotification] = useState(false);
-  const [showCompletionScreen, setShowCompletionScreen] = useState(false);
-  const [reflection, setReflection] = useState("");
-  const [completedDuration, setCompletedDuration] = useState(0);
+  const [currentTitle, setCurrentTitle] = useState("");
+  const [completedWorks, setCompletedWorks] = useState<CompletedWork[]>([]);
+  const [editingWorkId, setEditingWorkId] = useState<string | null>(null);
+  const [workStartTime, setWorkStartTime] = useState<Date | null>(null);
+  const [hasCompletedThisSession, setHasCompletedThisSession] = useState(false);
   const audioRef = useRef<HTMLAudioElement | null>(null);
   const supabase = createClientComponentClient();
 
@@ -60,13 +69,15 @@ const PomodoroTimer = () => {
       interval = setInterval(() => {
         setTimeLeft((time) => time - 1);
       }, 1000);
-    } else if (timeLeft === 0) {
+    } else if (timeLeft === 0 && !hasCompletedThisSession) {
+      // タイマーが0になって、まだ完了処理していない場合のみ
+      console.log("Timer reached 0, calling handleTimerComplete");
       handleTimerComplete();
     }
 
     return () => clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isRunning, timeLeft]);
+  }, [isRunning, timeLeft, hasCompletedThisSession]);
 
   const playNotificationSound = () => {
     if (audioRef.current) {
@@ -91,24 +102,15 @@ const PomodoroTimer = () => {
     }
   };
 
-  const copyCompletionMessage = async () => {
-    const taskTitle = title || "タイトルなし";
-    let message = `作業「${taskTitle}」を完了しました。（${completedDuration}分）`;
-
-    if (reflection.trim()) {
-      message += `\n\n感想:\n${reflection}`;
-    }
-
-    try {
-      await navigator.clipboard.writeText(message);
-      setShowCopyNotification(true);
-      setTimeout(() => setShowCopyNotification(false), 3000);
-    } catch (error) {
-      console.error("コピーに失敗しました:", error);
-    }
-  };
-
   const handleTimerComplete = async () => {
+    // 既に完了処理済みならスキップ
+    if (hasCompletedThisSession) {
+      console.log("Already completed this session, skipping");
+      return;
+    }
+
+    console.log("Completing timer session");
+    setHasCompletedThisSession(true);
     setIsRunning(false);
     playNotificationSound();
 
@@ -124,28 +126,51 @@ const PomodoroTimer = () => {
         });
       }
 
-      // 完了画面を表示
-      setCompletedDuration(settings.workDuration);
-      setShowCompletionScreen(true);
+      // 完了した作業を追加
+      const endTime = new Date();
+      const startTime = workStartTime || new Date(endTime.getTime() - settings.workDuration * 60 * 1000);
+
+      const newWork: CompletedWork = {
+        id: Date.now().toString(),
+        title: currentTitle || "タイトルなし",
+        duration: settings.workDuration,
+        startedAt: startTime,
+        completedAt: endTime,
+        reflection: "",
+      };
+
+      console.log("Adding new completed work:", newWork.title);
+      setCompletedWorks((prev) => [newWork, ...prev]);
+      setCurrentTitle("");
+      setWorkStartTime(null);
+
+      // 休憩モードに切り替えて自動開始
+      setTimeout(() => {
+        setIsBreak(true);
+        setTimeLeft(settings.breakDuration * 60);
+        setHasCompletedThisSession(false);
+        setIsRunning(true); // 休憩タイマーを自動開始
+      }, 100);
     } else {
+      // 休憩終了後、作業モードに切り替え
       setIsBreak(false);
       setTimeLeft(settings.workDuration * 60);
+      setHasCompletedThisSession(false);
     }
   };
 
-  const handleCloseCompletionScreen = () => {
-    setShowCompletionScreen(false);
-    setReflection("");
-    setIsBreak(true);
-    setTimeLeft(settings.breakDuration * 60);
-  };
-
   const toggleTimer = () => {
+    if (!isRunning && !isBreak && !workStartTime) {
+      // 作業開始時刻を記録
+      setWorkStartTime(new Date());
+      setHasCompletedThisSession(false);
+    }
     setIsRunning(!isRunning);
   };
 
   const resetTimer = () => {
     setIsRunning(false);
+    setHasCompletedThisSession(false);
     setTimeLeft(
       isBreak ? settings.breakDuration * 60 : settings.workDuration * 60
     );
@@ -153,6 +178,7 @@ const PomodoroTimer = () => {
 
   const toggleMode = () => {
     setIsRunning(false);
+    setHasCompletedThisSession(false);
     setIsBreak(!isBreak);
     setTimeLeft(
       !isBreak ? settings.breakDuration * 60 : settings.workDuration * 60
@@ -167,6 +193,56 @@ const PomodoroTimer = () => {
     }));
   };
 
+  const handleReflectionChange = (workId: string, reflection: string) => {
+    setCompletedWorks((prev) =>
+      prev.map((work) =>
+        work.id === workId ? { ...work, reflection } : work
+      )
+    );
+  };
+
+  const handleTitleChange = (workId: string, title: string) => {
+    setCompletedWorks((prev) =>
+      prev.map((work) =>
+        work.id === workId ? { ...work, title } : work
+      )
+    );
+  };
+
+  const copyWorkMessage = async (work: CompletedWork) => {
+    const startTimeStr = work.startedAt.toLocaleTimeString("ja-JP", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+    const endTimeStr = work.completedAt.toLocaleTimeString("ja-JP", {
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+
+    let message = `作業「${work.title}」を完了しました。（${work.duration}分）\n${startTimeStr}〜${endTimeStr}`;
+
+    if (work.reflection.trim()) {
+      message += `\n\n感想:\n${work.reflection}`;
+    }
+
+    try {
+      await navigator.clipboard.writeText(message);
+      // 一時的に通知を表示するため、編集中のIDを設定
+      setEditingWorkId(work.id);
+      setTimeout(() => {
+        if (editingWorkId === work.id) {
+          setEditingWorkId(null);
+        }
+      }, 2000);
+    } catch (error) {
+      console.error("コピーに失敗しました:", error);
+    }
+  };
+
+  const deleteWork = (workId: string) => {
+    setCompletedWorks((prev) => prev.filter((work) => work.id !== workId));
+  };
+
   const formatTime = (seconds: number) => {
     const minutes = Math.floor(seconds / 60);
     const remainingSeconds = seconds % 60;
@@ -176,185 +252,213 @@ const PomodoroTimer = () => {
   };
 
   return (
-    <Card className="w-full max-w-md mx-auto relative">
-      {showCompletionScreen ? (
-        <>
-          <CardHeader>
-            <CardTitle className="text-center">
-              🎉 作業完了！
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-            <div className="space-y-4">
-              <div className="p-4 bg-green-50 rounded-md">
-                <p className="text-sm text-gray-700">
-                  <strong>作業:</strong> {title || "タイトルなし"}
-                </p>
-                <p className="text-sm text-gray-700">
-                  <strong>時間:</strong> {completedDuration}分
-                </p>
-              </div>
+    <div className="w-full max-w-4xl mx-auto space-y-6">
+      {/* 音停止ボタン（音が鳴っている時のみ表示） */}
+      {isPlaying && (
+        <Card className="bg-yellow-50 border-yellow-300">
+          <CardContent className="pt-6">
+            <Button
+              onClick={stopSound}
+              className="w-full bg-red-500 hover:bg-red-600 text-white text-lg py-6"
+              size="lg"
+            >
+              🔇 音を停止
+            </Button>
+          </CardContent>
+        </Card>
+      )}
 
+      {/* タイマーカード */}
+      <Card className="w-full">
+        <CardHeader>
+          <CardTitle className="text-center flex justify-between items-center">
+            <span>{isBreak ? "休憩時間" : "ポモドーロタイマー"}</span>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setShowSettings(!showSettings)}
+                className="text-xs px-2 py-1 h-auto"
+              >
+                ⚙️ 設定
+              </Button>
+            </div>
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {showSettings ? (
+            <div className="space-y-4 mb-4">
               <div className="space-y-2">
-                <Label htmlFor="reflection">感想（任意）</Label>
-                <Textarea
-                  id="reflection"
-                  placeholder="この作業で学んだこと、気づいたことなどを記入してください..."
-                  value={reflection}
-                  onChange={(e) => setReflection(e.target.value)}
-                  rows={5}
+                <Label htmlFor="workDuration">作業時間（分）</Label>
+                <Input
+                  id="workDuration"
+                  name="workDuration"
+                  type="number"
+                  value={settings.workDuration}
+                  onChange={handleSettingsChange}
+                  min="1"
+                  max="60"
                 />
               </div>
-
-              {showCopyNotification && (
-                <div className="p-2 bg-green-100 text-green-800 rounded-md text-sm text-center">
-                  ✓ コピーしました
-                </div>
-              )}
-
-              <div className="flex gap-2">
-                <Button
-                  onClick={copyCompletionMessage}
-                  className="flex-1 bg-blue-500 hover:bg-blue-600"
-                >
-                  📋 コピー
-                </Button>
-                <Button
-                  onClick={handleCloseCompletionScreen}
-                  variant="outline"
-                  className="flex-1"
-                >
-                  休憩開始
-                </Button>
+              <div className="space-y-2">
+                <Label htmlFor="breakDuration">休憩時間（分）</Label>
+                <Input
+                  id="breakDuration"
+                  name="breakDuration"
+                  type="number"
+                  value={settings.breakDuration}
+                  onChange={handleSettingsChange}
+                  min="1"
+                  max="60"
+                />
               </div>
             </div>
-          </CardContent>
-        </>
-      ) : (
-        <>
-          <CardHeader>
-            <CardTitle className="text-center flex justify-between items-center">
-              <span>{isBreak ? "休憩時間" : "ポモドーロタイマー"}</span>
-              <div className="flex items-center gap-2">
-                {isPlaying && (
+          ) : (
+            <div className="text-center">
+              <div className="text-7xl font-bold mb-8 py-6">
+                {formatTime(timeLeft)}
+              </div>
+              <div className="space-y-4">
+                <div className="space-x-4">
+                  <Button
+                    onClick={toggleTimer}
+                    className={`px-8 ${
+                      isRunning
+                        ? "bg-red-500 hover:bg-red-600"
+                        : "bg-green-500 hover:bg-green-600"
+                    }`}
+                  >
+                    {isRunning ? "一時停止" : "スタート"}
+                  </Button>
+                  <Button onClick={resetTimer} variant="outline">
+                    リセット
+                  </Button>
+                </div>
+                <div>
+                  <Button
+                    onClick={toggleMode}
+                    variant="secondary"
+                    className="text-sm"
+                  >
+                    {isBreak
+                      ? "🎯 作業モードに切り替え"
+                      : "☕️ 休憩モードに切り替え"}
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+        </CardContent>
+
+        {/* 現在の作業タイトル（タイマーカード内） */}
+        <CardContent className="pt-0">
+          <Card className="bg-yellow-50 border-yellow-200">
+            <CardHeader>
+              <CardTitle className="text-lg">現在の作業</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <Input
+                type="text"
+                placeholder="作業タイトルを入力..."
+                value={currentTitle}
+                onChange={(e) => setCurrentTitle(e.target.value)}
+                className="text-lg bg-white"
+              />
+            </CardContent>
+          </Card>
+        </CardContent>
+
+        <CardFooter className="justify-end">
+          <a
+            href="https://otologic.jp"
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-gray-400 hover:text-gray-500"
+          >
+            Sound Effect: OtoLogic
+          </a>
+        </CardFooter>
+      </Card>
+
+      {/* 作業済みカード一覧 */}
+      {completedWorks.length > 0 && (
+        <div className="space-y-4">
+          <h2 className="text-2xl font-bold">作業済み</h2>
+          {completedWorks.map((work) => (
+            <Card key={work.id} className="bg-green-50 border-green-200">
+              <CardHeader>
+                <div className="flex justify-between items-start mb-2">
+                  <span className="text-lg font-semibold">✓ 完了</span>
                   <Button
                     variant="ghost"
                     size="sm"
-                    onClick={stopSound}
-                    className="text-xs px-2 py-1 h-auto"
+                    onClick={() => deleteWork(work.id)}
+                    className="text-xs text-red-500 hover:text-red-700 h-auto p-1"
                   >
-                    🔇 音を停止
+                    削除
                   </Button>
-                )}
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => setShowSettings(!showSettings)}
-                  className="text-xs px-2 py-1 h-auto"
-                >
-                  ⚙️ 設定
-                </Button>
-              </div>
-            </CardTitle>
-          </CardHeader>
-          <CardContent>
-        {showSettings ? (
-          <div className="space-y-4 mb-4">
-            <div className="space-y-2">
-              <Label htmlFor="workDuration">作業時間（分）</Label>
-              <Input
-                id="workDuration"
-                name="workDuration"
-                type="number"
-                value={settings.workDuration}
-                onChange={handleSettingsChange}
-                min="1"
-                max="60"
-              />
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="breakDuration">休憩時間（分）</Label>
-              <Input
-                id="breakDuration"
-                name="breakDuration"
-                type="number"
-                value={settings.breakDuration}
-                onChange={handleSettingsChange}
-                min="1"
-                max="60"
-              />
-            </div>
-          </div>
-        ) : (
-          <div className="text-center">
-            {!isBreak && (
-              <div className="mb-6">
-                <Label htmlFor="title" className="text-sm text-gray-600">
-                  作業タイトル
-                </Label>
-                <Input
-                  id="title"
-                  type="text"
-                  placeholder="例: レポート作成"
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  disabled={isRunning}
-                  className="mt-2 text-center"
-                />
-              </div>
-            )}
-            <div className="text-6xl font-bold mb-8">
-              {formatTime(timeLeft)}
-            </div>
-            {showCopyNotification && (
-              <div className="mb-4 p-2 bg-green-100 text-green-800 rounded-md text-sm">
-                ✓ 完了メッセージをコピーしました
-              </div>
-            )}
-            <div className="space-y-4">
-              <div className="space-x-4">
-                <Button
-                  onClick={toggleTimer}
-                  className={`px-8 ${
-                    isRunning
-                      ? "bg-red-500 hover:bg-red-600"
-                      : "bg-green-500 hover:bg-green-600"
-                  }`}
-                >
-                  {isRunning ? "一時停止" : "スタート"}
-                </Button>
-                <Button onClick={resetTimer} variant="outline">
-                  リセット
-                </Button>
-              </div>
-              <div>
-                <Button
-                  onClick={toggleMode}
-                  variant="secondary"
-                  className="text-sm"
-                >
-                  {isBreak
-                    ? "🎯 作業モードに切り替え"
-                    : "☕️ 休憩モードに切り替え"}
-                </Button>
-              </div>
-            </div>
-          </div>
-        )}
-      </CardContent>
-          <CardFooter className="justify-end">
-            <a
-              href="https://otologic.jp"
-              target="_blank"
-              rel="noopener noreferrer"
-              className="text-xs text-gray-400 hover:text-gray-500"
-            >
-              Sound Effect: OtoLogic
-            </a>
-          </CardFooter>
-        </>
+                </div>
+                <p className="text-sm text-gray-600">
+                  {work.duration}分 •{" "}
+                  {work.startedAt.toLocaleDateString("ja-JP", {
+                    year: "numeric",
+                    month: "2-digit",
+                    day: "2-digit",
+                  })}{" "}
+                  {work.startedAt.toLocaleTimeString("ja-JP", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                  〜
+                  {work.completedAt.toLocaleTimeString("ja-JP", {
+                    hour: "2-digit",
+                    minute: "2-digit",
+                  })}
+                </p>
+              </CardHeader>
+              <CardContent className="space-y-4">
+                <div className="space-y-2">
+                  <Label htmlFor={`title-${work.id}`}>作業タイトル</Label>
+                  <Input
+                    id={`title-${work.id}`}
+                    type="text"
+                    placeholder="タイトルを入力..."
+                    value={work.title}
+                    onChange={(e) => handleTitleChange(work.id, e.target.value)}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor={`reflection-${work.id}`}>感想</Label>
+                  <Textarea
+                    id={`reflection-${work.id}`}
+                    placeholder="この作業の感想を記入..."
+                    value={work.reflection}
+                    onChange={(e) =>
+                      handleReflectionChange(work.id, e.target.value)
+                    }
+                    rows={3}
+                  />
+                </div>
+                <div className="flex items-center gap-2">
+                  <Button
+                    onClick={() => copyWorkMessage(work)}
+                    className="bg-blue-500 hover:bg-blue-600"
+                    size="sm"
+                  >
+                    📋 コピー
+                  </Button>
+                  {editingWorkId === work.id && (
+                    <span className="text-sm text-green-600">
+                      ✓ コピーしました
+                    </span>
+                  )}
+                </div>
+              </CardContent>
+            </Card>
+          ))}
+        </div>
       )}
-    </Card>
+    </div>
   );
 };
 

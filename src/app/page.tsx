@@ -2,9 +2,9 @@ import PomodoroTimer from "@/components/PomodoroTimer";
 
 export default function Home() {
   return (
-    <main className="min-h-screen p-8">
-      <div className="max-w-4xl mx-auto">
-        <h1 className="text-3xl font-bold text-center mb-8">
+    <main className="min-h-screen p-4 md:p-8 bg-gray-100">
+      <div className="max-w-6xl mx-auto">
+        <h1 className="text-4xl md:text-5xl font-bold text-center mb-8">
           ポモドーロタイマー
         </h1>
         <PomodoroTimer />
